@@ -46,42 +46,58 @@ async function triggerSearch() {
     tabs: options.tabs.checked,
     history: options.history.checked,
   };
-  if (!query) {
-    resultsList.innerHTML = "";
-    return;
-  }
 
   // Precedence: bookmarks > tabs > history
   let results = [];
-  if (selected.bookmarks) {
-    const bookmarks = await searchBookmarks(query);
-    results = results.concat(
-      bookmarks.map((b) => ({
-        type: "FAV",
-        title: b.title,
-        url: b.url,
-      }))
-    );
-  }
-  if (selected.tabs) {
-    const tabs = await searchTabs(query);
-    results = results.concat(
-      tabs.map((t) => ({
-        type: "TAB",
-        title: t.title,
-        url: t.url,
-      }))
-    );
-  }
-  if (selected.history) {
-    const history = await searchHistory(query);
-    results = results.concat(
-      history.map((h) => ({
-        type: "HIST",
-        title: h.title,
-        url: h.url,
-      }))
-    );
+
+  if (!query) {
+    // If query is empty, and history is selected, show recent history
+    if (selected.history) {
+      const historyItems = await searchHistory(""); // Empty query for recent history
+      results = results.concat(
+        historyItems.map((h) => ({
+          type: "HIST",
+          title: h.title,
+          url: h.url,
+        }))
+      );
+    } else {
+      // If query is empty and history is not selected, clear results
+      resultsList.innerHTML = "";
+      return;
+    }
+  } else {
+    // If query is not empty, proceed with normal search
+    if (selected.bookmarks) {
+      const bookmarks = await searchBookmarks(query);
+      results = results.concat(
+        bookmarks.map((b) => ({
+          type: "FAV",
+          title: b.title,
+          url: b.url,
+        }))
+      );
+    }
+    if (selected.tabs) {
+      const tabs = await searchTabs(query);
+      results = results.concat(
+        tabs.map((t) => ({
+          type: "TAB",
+          title: t.title,
+          url: t.url,
+        }))
+      );
+    }
+    if (selected.history) {
+      const historyItems = await searchHistory(query);
+      results = results.concat(
+        historyItems.map((h) => ({
+          type: "HIST",
+          title: h.title,
+          url: h.url,
+        }))
+      );
+    }
   }
 
   // Remove duplicates by URL, keep first occurrence (by precedence)
@@ -96,30 +112,36 @@ async function triggerSearch() {
 }
 
 function renderResults(items) {
-  resultsList.innerHTML = "";
+  resultsList.innerHTML = ""; // Clear the list once
+  const fragment = document.createDocumentFragment();
+
   if (!items.length) {
-    resultsList.innerHTML =
-      '<li style="color:#888;text-align:center;">No results found</li>';
-    return;
-  }
-  for (const item of items) {
     const li = document.createElement("li");
-    li.tabIndex = 0;
-    li.innerHTML = `
-      <span class="result-type">${item.type}</span>
-      <span class="result-title" style="flex:1;">${escapeHTML(
-        item.title || item.url || ""
-      )}</span>
-      <svg width="16" height="16" style="margin-left:4px;opacity:0.5;" viewBox="0 0 20 20"><path fill="currentColor" d="M7.05 4.05a.75.75 0 0 1 1.06 0l5.25 5.25a.75.75 0 0 1 0 1.06l-5.25 5.25a.75.75 0 1 1-1.06-1.06L11.19 10 7.05 5.86a.75.75 0 0 1 0-1.06z"/></svg>
-    `;
-    li.addEventListener("click", () => {
-      if (item.url) chrome.tabs.create({ url: item.url });
-    });
-    li.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && item.url) chrome.tabs.create({ url: item.url });
-    });
-    resultsList.appendChild(li);
+    li.style.color = "#888";
+    li.style.textAlign = "center";
+    li.textContent = "No results found";
+    fragment.appendChild(li);
+  } else {
+    for (const item of items) {
+      const li = document.createElement("li");
+      li.tabIndex = 0;
+      li.innerHTML = `
+        <span class="result-type">${item.type}</span>
+        <span class="result-title" style="flex:1;">${escapeHTML(
+          item.title || item.url || ""
+        )}</span>
+        <svg width="16" height="16" style="margin-left:4px;opacity:0.5;" viewBox="0 0 20 20"><path fill="currentColor" d="M7.05 4.05a.75.75 0 0 1 1.06 0l5.25 5.25a.75.75 0 0 1 0 1.06l-5.25 5.25a.75.75 0 1 1-1.06-1.06L11.19 10 7.05 5.86a.75.75 0 0 1 0-1.06z"/></svg>
+      `;
+      li.addEventListener("click", () => {
+        if (item.url) chrome.tabs.create({ url: item.url });
+      });
+      li.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && item.url) chrome.tabs.create({ url: item.url });
+      });
+      fragment.appendChild(li);
+    }
   }
+  resultsList.appendChild(fragment);
 }
 
 // Search helpers
@@ -135,14 +157,44 @@ function searchBookmarks(query) {
 function searchTabs(query) {
   return new Promise((resolve) => {
     chrome.tabs.query({}, (tabs) => {
-      const lower = query.toLowerCase();
-      resolve(
-        tabs.filter(
-          (tab) =>
-            (tab.title && tab.title.toLowerCase().includes(lower)) ||
-            (tab.url && tab.url.toLowerCase().includes(lower))
-        )
-      );
+      // Check if query is intended as a regex /pattern/flags
+      if (query.startsWith("/") && query.lastIndexOf("/") > 0) {
+        const lastSlashIdx = query.lastIndexOf("/");
+        const pattern = query.substring(1, lastSlashIdx);
+        const flags = query.substring(lastSlashIdx + 1);
+        let regex;
+        try {
+          regex = new RegExp(pattern, flags);
+          resolve(
+            tabs.filter(
+              (tab) =>
+                (tab.title && regex.test(tab.title)) ||
+                (tab.url && regex.test(tab.url))
+            )
+          );
+        } catch (e) {
+          console.error("Invalid regex:", e);
+          // Fallback to simple substring search with the raw query
+          const lower = query.toLowerCase();
+          resolve(
+            tabs.filter(
+              (tab) =>
+                (tab.title && tab.title.toLowerCase().includes(lower)) ||
+                (tab.url && tab.url.toLowerCase().includes(lower))
+            )
+          );
+        }
+      } else {
+        // Standard case-insensitive substring search
+        const lower = query.toLowerCase();
+        resolve(
+          tabs.filter(
+            (tab) =>
+              (tab.title && tab.title.toLowerCase().includes(lower)) ||
+              (tab.url && tab.url.toLowerCase().includes(lower))
+          )
+        );
+      }
     });
   });
 }
