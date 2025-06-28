@@ -20,7 +20,17 @@
       "js": ["content.js"]
     }
   ],
-  "permissions": ["bookmarks", "tabs", "history", "storage", "scripting"],
+  "permissions": [
+    "bookmarks",
+    "tabs",
+    "history",
+    "storage",
+    "scripting",
+    "tabGroups",
+    "sessions",
+    "notifications",
+    "alarms"
+  ],
   "host_permissions": ["<all_urls>"],
   "icons": {
     "16": "images/icon16.png",
